@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdio.h>
-#include <error.h>
+#include <errno.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/types.h>

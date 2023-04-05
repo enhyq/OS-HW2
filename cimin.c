@@ -28,12 +28,26 @@ typedef struct _arg_data {
     char **argv;
     int argc;
 
-    // is this needed?
-    // ~_arg_data() {
-    //     free(argv);
-    // }
-
+    char crashing_input[4097];
+    int crashing_input_size;
 } arg_data;
+
+
+void print(arg_data *d){
+    printf("input: %s\n", d->input);
+    printf("message: %s\n", d->message);
+    printf("output: %s\n", d->output);
+    printf("program: %s\n", d->program);
+
+    printf("program_name: %s\n", d->program_name);
+    for(int i=0; i<d->argc+1; i++) {
+        printf("argv[%d]: %s\n", i, d->argv[i]);
+    }
+    printf("argc: %d\n", d->argc);
+    printf("crashing_input: %s\n", d->crashing_input);
+    printf("crashing_input_size: %d\n", d->crashing_input_size);
+}
+
 
 
 /* function declarations */
@@ -41,59 +55,132 @@ void usage_error(char*);
 void usage_error_with_message(char*, char*);
 void handler(int);
 arg_data parser(int, char*[]);
-char* minimize(char*);
-char* reduce(char*);
+void minimize(arg_data*);
+void reduce(arg_data*);
 void child_proc(arg_data*);
-void parent_proc(char*, int);
+void parent_proc(arg_data*, char*);
 
 
 int main(int argc, char *argv[]) {
 
     arg_data data = parser(argc, argv);
 
-    char crashing_input[4097]; // +1 for EOF
     int input_fd = open(data.input, O_RDONLY);
-    int crashing_input_size = read(input_fd, crashing_input, 4096);
-    crashing_input[crashing_input_size] = '\0'; // need this?
+    int c_i_arr_size = sizeof(data.crashing_input)/sizeof(data.crashing_input[0]);
+    data.crashing_input_size = read(input_fd, data.crashing_input, c_i_arr_size);
+    data.crashing_input_size--; // since EOF is also read, remove this count
+    data.crashing_input[c_i_arr_size-1] = '\0'; // mark the last char as NULL just in case
 
-    // this read function is weird 
-    // when there is only 1 character, it reads 2
-    // when there are 4096 characters, it reads 4096 ??
-    printf("crashing input size: %d\n", crashing_input_size);
-    
+    // testing
+    printf("crashing input size: %d\n", data.crashing_input_size);
+
+    printf("---------------\n");
+    print(&data);
+    printf("---------------\n");
+
+    // this will modify the given input
+    minimize(&data);
+
+    // need to free data (of arg_data size)?
+
+    // TODO: need to save output file before exiting
+
+    return 0;
+}
+
+
+void minimize(arg_data *data) {
     // set interrupt signal handler before running algorithm
     signal(SIGINT, handler);
     signal(SIGALRM, handler);
-    // when interrup signal is raised, need to terminate all child processes and stop algorithm
-    
+
     // set timer value
     t.it_value.tv_sec = 3;
     t.it_value.tv_usec = 100000; // micro second -> (10^-6) second
     t.it_interval = t.it_value; // 3.1 sec
 
+    /* you could just use alarm() function */
+    // pipe variable is global
     if (pipe(child_to_parent_pipe) != 0 || pipe(parent_to_child_pipe) != 0) {
         perror("Error");
         exit(1); // 1 to indicate process failed
     }
-
-    int child_pid = fork();
-    if(child_pid == 0) {
-        child_proc(&data);
-    } else {
-        parent_proc(crashing_input, crashing_input_size);
-    }
+    
+    // recursive function that will perform minimization
+    reduce(data);
 
     // is this needed?
-    close(child_to_parent_pipe[0]);
+    close(child_to_parent_pipe[0]); // close read end
+    close(parent_to_child_pipe[1]); // close write end
+}
+
+void reduce(arg_data *data) {
+    // reduce(char* crashing_input)
+    // char* minimized = data->crashing_input;
+    // int minimized_size = data->crashing_input_size;
+
+    // This function will directly update the crashing_input and its size variable
+    int tm = data->crashing_input_size;
+    char* t = data->crashing_input;
+    int s = tm - 1;
+
+    // pipes are global vairable
+    // close unused end points
     close(child_to_parent_pipe[1]);
     close(parent_to_child_pipe[0]);
-    close(parent_to_child_pipe[1]);
 
-    // need to free data?
+    // Implementation of the algorithm
+    while(s > 0) {
+        printf("\n");
+        // printf("s: %d\n", s);
+        // head + tail
+        printf("Testing head_tail: \n");
+        for( int i=0 ; i<=tm - s ; i++ ) {
+            char head_tail[tm]; // begins with 1 character + null at the end
+            
+            // strncpy(dst, src, cnt);
+            strncpy(head_tail, t, i);
+            strcpy(head_tail+i, t+s+i);
+            head_tail[i+(tm-s-i)] = 0x0;
 
-    // TODO: need to save output file before exiting
+            printf(" %s\n", head_tail);
 
-    return 0;
+
+
+        }
+        // mid
+        printf("Testing mid: \n");
+        for( int i=0 ; i<=tm - s - 1 ; i++ ) {
+            char mid[tm]; // doesn't really have to fit the size (okay to have more)
+            strncpy(mid, t+i, s);
+            mid[i+s] = 0x0;
+            
+            printf(" %s\n", mid);
+            
+            int child_pid = fork();
+            if(child_pid == 0) {
+                child_proc(data);
+            } else {
+                char buf[4097];
+                parent_proc(data, buf); // update buf
+                // strstr returns pointer to of the index found
+                if(strstr(buf, data->message) != NULL) {
+                    printf("Crash detected!\n");
+                    // update crashing input
+                    // update crashing input size
+                    // recursively call reduce()
+                    
+                }
+            }
+
+        }
+        s--;
+    }
+    // end of while means that there was nothing to reduce
+    printf("Nothing to reduce!\n"); // testing
+    return;
+
+    
 }
 
 
@@ -121,7 +208,7 @@ arg_data parser(int argc, char* argv[]) {
             usage_error(argv[0]);
             break;
         }
-        fprintf(stdout, "-%c: %s\n", argv[opt_index][1], argv[opt_index]); // testing
+        fprintf(stdout, "-%c: %s\n", argv[opt_index][1], argv[opt_index+1]); // testing
         opt_requirement--;
     }
 
@@ -130,6 +217,8 @@ arg_data parser(int argc, char* argv[]) {
     if(argv[opt_index] == 0x0) usage_error(argv[0]);
 
     data.program = argv[opt_index++];
+    // need program_name ??
+    data.program_name = data.program; // TODO: get only the name of program
 
     data.argc = argc - opt_index;
 
@@ -149,7 +238,7 @@ arg_data parser(int argc, char* argv[]) {
     return data;
 }
 
-void child_proc(arg_data* data) {
+void child_proc(arg_data *data) {
     // pipes are global variable
         close(child_to_parent_pipe[0]); // close read end of child_to_parent_pipe
         close(parent_to_child_pipe[1]); // close write end of parent_to_child_pipe
@@ -158,53 +247,59 @@ void child_proc(arg_data* data) {
         dup2(parent_to_child_pipe[0], 0 /*standard input*/);
 
         // testing
-        fprintf(stderr, "hello this is tesing!\n");
-        fprintf(stdout, "wow this is tesing!\n");
+        // fprintf(stderr, "hello this is tesing!\n");
+        // fprintf(stdout, "wow this is tesing!\n");
 
         int test = execv(data->program, data->argv);
-        printf("something wrong from exec: %d\n", test);
+        printf("something wrong from exec in child process.\n return code: %d\n", test);
 }
 
-void parent_proc(char* crashing_input, int crashing_input_size) {
-    // pipes are global vairable
-    close(child_to_parent_pipe[1]);
-    close(parent_to_child_pipe[0]);
+/* 
+ * parent will update "buf" variable directly
+ * buf contains the stderr output of the target program
+ */
+void parent_proc(arg_data *data, char* buf) {
 
     // timer is stopped when interrupt signal is raised
     setitimer(ITIMER_REAL, &t, 0x0); // start timer
 
     ssize_t s;                      // write crashing input to pipe[1]
-    s = crashing_input_size;
+    s = data->crashing_input_size;
 
     ssize_t sent = 0;
-    char * data = crashing_input;
+    char *send_data = data->crashing_input;
+
+    printf("send data: %s\n", send_data);
+    printf("s: %d\n", s);
+
+    char test_in[10] = "hello";
+    send_data = test_in;
 
     while(sent < s) {
-        // in a fortunate case, all values are sent successfully
-        // however sometimes, only part of the data is sent successfully
-        // sent variable is for this case
-
-        // return value is accumulated in [sent]
-        sent += write(parent_to_child_pipe[1], data + sent, s - sent);
-
+        printf("sending \n");
+        sent += write(parent_to_child_pipe[1], send_data + sent, s - sent);
         // repeat until all data is sent
     }
-    close(parent_to_child_pipe[1]); // is this needed for the child to finish reading?
+    // char nu = 0x0;
+    // write(parent_to_child_pipe[1], &nu, 1);
+    // close(parent_to_child_pipe[1]); // need to close pipe for the child read to finish
 
-    char buf[3001]; // will it be too slow?
-    // continuously read the pipe
-    // read only 100 bytes of data at a time
     // read() will return how many bytes was taken from the kernel (read)
-    while(s = read(child_to_parent_pipe[0], buf, 3000)) {
-        // TODO: concatenate all of the read strings
+    size_t buf_size = sizeof(buf)/sizeof(buf[0]);
+    // read could be interrupted.. how to handle this kind of case?
+
+    // TODO: should check if read can happen more than once
+    // What if no output is given from child?
+    while(s = read(child_to_parent_pipe[0], buf, buf_size-1)) {
+        // TODO: concatenate all of the read strings ???
         printf("(read: %ld)\n", s);  // testing
-        buf[s + 1] = 0x0;           // put last character as NULL so it can be printed out as string
+        buf[s] = 0x0;           // put last character as NULL so it can be printed out as string
         printf(" > %s\n", buf);     // testing
     }
-    // if there is nothing to read, the above loop will break
+    // buf[s] = 0x0;
 
     printf("parent is finised reading\n"); // testing
-    wait(0x0); // wait until child is finished (terminated?)
+    wait(0x0); // wait until child is finished (terminated?) ???
 }
 
 void usage_error(char* program_name) {
@@ -216,13 +311,9 @@ void usage_error_with_message(char* program_name, char* message) {
     usage_error(program_name);
 }
 void handler(int sig) {
-    // can register multiple signal code to handler
-    printf("this is handler function!\n");
-    
-    // can redefine signal
     if (sig == SIGINT) {
         // timer is stopped when interrupt is raised
-        setitimer(ITIMER_REAL, 0x0, 0x0); // stop timer
+        setitimer(ITIMER_REAL, 0x0, 0x0); // STOP TIMER ! (this works!)
 
         printf("Do you want to quit?");
         if (getchar() == 'y') {
@@ -235,9 +326,6 @@ void handler(int sig) {
         // balance program..
         // print가 출력되지 않는다..?
         printf("RING!\n");
-        perror("hey parent, child is taking too long!\n");
-        fprintf(stderr, "taking too long...\n");
-        fprintf(stdout, "w n w ?\n");
 
         // sleep(1);
 
@@ -249,8 +337,7 @@ void handler(int sig) {
 
         // TODO: need to kill child process
     } else {
-        printf("what is this SIG? \n");
+        printf("what SIG is this ???\n");
     }
-    printf("end of signal handler\n");
 }
 

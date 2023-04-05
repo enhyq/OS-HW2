@@ -75,7 +75,11 @@ int main(int argc, char *argv[]) {
     // need to free data (of arg_data size)?
 
     // TODO: need to save output file before exiting
+    FILE *f = fopen(data.output,"w");
+    fprintf(f, "%s", data.crashing_input);
+    fclose(f);
 
+    printf("Program done\n");
     return 0;
 }
 
@@ -119,7 +123,43 @@ void reduce(arg_data *data) {
 
             // printf(" %s\n", head_tail);
 
-            // TODO: 
+            /* COMMON CODE FOR MID AND HEAD_TAIL */
+            if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
+                perror("Error creating pipe");
+                exit(1); // 1 to indicate process failed
+            }
+            
+            int child_pid = fork();
+            if(child_pid == 0) {
+                char buf[4097] = {'\0'};
+
+                printf("head_tail is: %s\n", head_tail);
+
+                /* parent_proc WILL UPDATE buf */
+                parent_proc(data, head_tail, buf); // update buf
+
+                close(main_pipe[1]); // close write end
+                close(error_pipe[0]); // close read end
+
+                // printf("Error Read:\n");
+                // printf("%s\n", buf);
+                // sleep(5);
+
+                /* CHECK IF MESSAGE IS IN ERROR STRING */
+                if(strstr(buf, data->message) != NULL) { // strstr returns pointer
+                    printf("Crash detected!\n");
+                    // update crashing input
+                    strcpy(data->crashing_input, head_tail);
+                    // update crashing input size
+                    data->crashing_input_size = strlen(head_tail);
+                    // recursively call reduce()
+                    reduce(data);
+                    return;
+                }
+            } else {
+                child_proc(data);
+            }
+            /* END OF COMMON CODE */
 
         }
         // mid
@@ -130,7 +170,7 @@ void reduce(arg_data *data) {
             
             // printf(" %s\n", mid);
 
-            /* common algorithm part*/
+            /* COMMON CODE FOR MID AND HEAD_TAIL */
             if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
                 perror("Error creating pipe");
                 exit(1); // 1 to indicate process failed
@@ -166,13 +206,13 @@ void reduce(arg_data *data) {
             } else {
                 child_proc(data);
             }
-
+            /* END OF COMMON CODE */
         }
         s--;
     }
     // end of while means that there was nothing to reduce
-    printf("Nothing to reduce!\n"); // testing
-    return;
+    printf("Reduce finished\n"); // testing
+    return; //?
 }
 
 
@@ -275,8 +315,8 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
     ssize_t s = strlen(ci);
     ssize_t sent = 0;
 
-    printf("s: %d\n", s);
-    printf("sent: %d\n", sent);
+    // printf("s: %d\n", s);
+    // printf("sent: %d\n", sent);
 
     while(sent < s) {
         // printf("sending: %s\n", send_data+sent);
@@ -291,19 +331,18 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
 
     // read() will return how many bytes was taken from the kernel (read)
     // read() will by default block if there is nothing to read when requested
-    char temp[100];
     int count = 0;
     while(s = read(error_pipe[0], buf+count, 100)) {
         count += s;
         // TODO: concatenate all of the read strings ???
         // printf("(read: %ld)\n", s);  // testing
         // buf[s] = 0x0;           // put last character as NULL so it can be printed out as string
-        printf(" > %s\n", buf);     // testing
+        // printf(" > %s\n", buf);     // testing
     }
     // printf("read: %ld\n", s);
     buf[count] = 0x0;
 
-    printf("parent is finised reading\n"); // testing
+    // printf("parent is finised reading\n"); // testing
     wait(0x0); // wait until child is finished (terminated?) ???
 }
 

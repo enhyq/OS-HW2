@@ -13,9 +13,14 @@
 
 
 /* global variables */
+// should I put static to the variables?
 int error_pipe[2];
 int main_pipe[2];
 struct itimerval t;
+int timeover = 0;
+int child_running = 0;
+int interrupt_exit = 0;
+pid_t child_pid;
 
 /* structure to store argument data */
 typedef struct _arg_data {
@@ -88,6 +93,7 @@ void minimize(arg_data *data) {
     // set interrupt signal handler before running algorithm
     signal(SIGINT, handler);
     signal(SIGALRM, handler);
+    signal(SIGCHLD, handler); // masaka...
 
     // set timer value
     t.it_value.tv_sec = 3;
@@ -129,8 +135,12 @@ void reduce(arg_data *data) {
                 exit(1); // 1 to indicate process failed
             }
             
-            int child_pid = fork();
-            if(child_pid == 0) {
+            /* child_pid IS GLOBAL VARIABLE */
+            child_pid = fork();
+            child_running = 1;
+            if(child_pid == 0 /* it's CHILD !!!*/) {
+                child_proc(data);
+            } else /* it's PARENT !!! */ {
                 char buf[4097] = {'\0'};
 
                 printf("head_tail is: %s\n", head_tail);
@@ -145,8 +155,22 @@ void reduce(arg_data *data) {
                 // printf("%s\n", buf);
                 // sleep(5);
 
+                /* CHECK INTERRUPT EXIT */
+                if(interrupt_exit) {
+                    return; // return out immediately
+                }
+
+                /* CHECK CRASH BY TIME OVER */
+                if(timeover) {
+                    timeover = 0;
+                    printf("Crash detected by time over!\n");
+                    strcpy(data->crashing_input, head_tail);
+                    reduce(data);
+                    return;
+                }
+
                 /* CHECK IF MESSAGE IS IN ERROR STRING */
-                if(strstr(buf, data->message) != NULL) { // strstr returns pointer
+                else if(strstr(buf, data->message) != NULL) { // strstr returns pointer
                     printf("Crash detected!\n");
                     // update crashing input
                     strcpy(data->crashing_input, head_tail);
@@ -156,8 +180,6 @@ void reduce(arg_data *data) {
                     reduce(data);
                     return;
                 }
-            } else {
-                child_proc(data);
             }
             /* END OF COMMON CODE */
 
@@ -177,7 +199,10 @@ void reduce(arg_data *data) {
             }
             
             int child_pid = fork();
-            if(child_pid == 0) {
+            child_running = 1;
+            if(child_pid == 0 /* it's CHILD !!!*/) {
+                child_proc(data);
+            } else /* it's PARENT !!! */ {
                 char buf[4097] = {'\0'};
 
                 printf("mid is: %s\n", mid);
@@ -192,8 +217,22 @@ void reduce(arg_data *data) {
                 // printf("%s\n", buf);
                 // sleep(5);
 
+                /* CHECK INTERRUPT EXIT */
+                if(interrupt_exit) {
+                    return; // return out immediately
+                }
+
+                /* CHECK CRASH BY TIME OVER */
+                if(timeover) {
+                    timeover = 0;
+                    printf("Crash detected by time over!\n");
+                    strcpy(data->crashing_input, mid);
+                    reduce(data);
+                    return;
+                }
+
                 /* CHECK IF MESSAGE IS IN ERROR STRING */
-                if(strstr(buf, data->message) != NULL) { // strstr returns pointer
+                else if(strstr(buf, data->message) != NULL) { // strstr returns pointer
                     printf("Crash detected!\n");
                     // update crashing input
                     strcpy(data->crashing_input, mid);
@@ -203,8 +242,6 @@ void reduce(arg_data *data) {
                     reduce(data);
                     return;
                 }
-            } else {
-                child_proc(data);
             }
             /* END OF COMMON CODE */
         }
@@ -212,7 +249,7 @@ void reduce(arg_data *data) {
     }
     // end of while means that there was nothing to reduce
     printf("Reduce finished\n"); // testing
-    return; //?
+    return; // yes
 }
 
 
@@ -294,6 +331,8 @@ void child_proc(arg_data *data) {
     // fprintf(stderr, "hello this is tesing!\n");
     // fprintf(stdout, "wow this is tesing!\n");
 
+    // sleep(5);
+
     int test = execv(data->program, data->argv);
     printf("something wrong from exec in child process.\n return code: %d\n", test);
 }
@@ -308,8 +347,9 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
     close(error_pipe[1]); // parent error write not needed
     close(main_pipe[0]);
 
-    // timer is stopped when interrupt signal is raised
-    setitimer(ITIMER_REAL, &t, 0x0); // start timer
+    /* START TIMER */
+    timeover = 0;
+    setitimer(ITIMER_REAL, &t, 0x0);
 
     char *send_data = ci;
     ssize_t s = strlen(ci);
@@ -343,7 +383,26 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
     buf[count] = 0x0;
 
     // printf("parent is finised reading\n"); // testing
-    wait(0x0); // wait until child is finished (terminated?) ???
+    // int return_status = wait(0x0); // wait until child is finished (terminated?) ???
+    // Even when signal occurs during wait(), the block state is not freed (not quite sure)
+    // printf("child returned with: %d\n", return_status);
+    // child_running = 0; // child is not running any more
+
+    // This while loop will suspend the process until child is finished
+    // It will also terminate the child proecss if time is up
+    while(child_running){
+        if(timeover || interrupt_exit) {
+            /* child_pid IS GLOBAL */
+            kill(child_pid, SIGKILL); // or use SIGSTOP?
+            child_running = 0;
+            // IF TIME IS OVER, REGARDLESS OF THE stderr OUTPUT, CONSIDER IT AS CRASH
+            // or check buf size?
+            break;
+        }
+    };
+    
+    /* STOP TIMER ! */
+    setitimer(ITIMER_REAL, 0x0, 0x0); // stop because child has finished
 }
 
 void usage_error(char* program_name) {
@@ -356,22 +415,28 @@ void usage_error_with_message(char* program_name, char* message) {
 }
 void handler(int sig) {
     if (sig == SIGINT) {
-        // timer is stopped when interrupt is raised
-        setitimer(ITIMER_REAL, 0x0, 0x0); // STOP TIMER ! (this works!)
+        /* STOP TIMER ! */
+        // setitimer(ITIMER_REAL, 0x0, 0x0);
+        interrupt_exit = 1;
+        // printf("Do you want to quit?");
+        // if (getchar() == 'y') {
+        //     exit(0);
+        // }
 
-        printf("Do you want to quit?");
-        if (getchar() == 'y') {
-            exit(0);
-        }
+        // need to save current minimized crash input
+
     } else if (sig == SIGALRM) {
-        // only child will have SIGALRM NO NO NO NO NO
-        // when exec is called signal handler will not survive!!!
+        // printf("RING!\n"); // testing
+        timeover = 1;
 
-        // balance program..
-        // print가 출력되지 않는다..?
-        printf("RING!\n");
-
-        // sleep(1);
+        // if(child_running) {
+        //     /* STOP TIMER ! */
+        //     setitimer(ITIMER_REAL, 0x0, 0x0);
+        //     kill(child_pid, SIGKILL); // or use SIGSTOP?
+        //     child_running = 0;
+        // } else {
+        //     printf("something is wrong with the timer\n");
+        // }
 
         // signal handler에서 return 하면 어디로 가는 걸까?
         // return;
@@ -380,8 +445,14 @@ void handler(int sig) {
         // exec 때문에 signal handler가 없어졌으니 이해하지 못한게 당연하다 
 
         // TODO: need to kill child process
+    } else if (sig == SIGCHLD) {
+        // this is not working
+        // I think this signal is modified(?) by the server to clean zombie processes
+        // race condition between the arrival of SIGCHLD and the return from wait() ???
+        // printf("child was terminated!\n");
+        child_running = 0;
     } else {
-        printf("what SIG is this ???\n");
+        printf("what SIG is this ???: %d\n", sig);
     }
 }
 

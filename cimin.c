@@ -13,8 +13,8 @@
 
 
 /* global variables */
-int child_to_parent_pipe[2];
-int parent_to_child_pipe[2];
+int error_pipe[2];
+int main_pipe[2];
 struct itimerval t;
 
 /* structure to store argument data */
@@ -101,7 +101,7 @@ void minimize(arg_data *data) {
 
     /* you could just use alarm() function */
     // pipe variable is global
-    if (pipe(child_to_parent_pipe) != 0 || pipe(parent_to_child_pipe) != 0) {
+    if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
         perror("Error");
         exit(1); // 1 to indicate process failed
     }
@@ -110,8 +110,8 @@ void minimize(arg_data *data) {
     reduce(data);
 
     // is this needed?
-    close(child_to_parent_pipe[0]); // close read end
-    close(parent_to_child_pipe[1]); // close write end
+    close(error_pipe[0]); // close read end
+    close(main_pipe[1]); // close write end
 }
 
 void reduce(arg_data *data) {
@@ -126,8 +126,8 @@ void reduce(arg_data *data) {
 
     // pipes are global vairable
     // close unused end points
-    close(child_to_parent_pipe[1]);
-    close(parent_to_child_pipe[0]);
+    close(error_pipe[1]);
+    close(main_pipe[0]);
 
     // Implementation of the algorithm
     while(s > 0) {
@@ -240,11 +240,11 @@ arg_data parser(int argc, char* argv[]) {
 
 void child_proc(arg_data *data) {
     // pipes are global variable
-        close(child_to_parent_pipe[0]); // close read end of child_to_parent_pipe
-        close(parent_to_child_pipe[1]); // close write end of parent_to_child_pipe
+        close(error_pipe[0]); // close read end of error_pipe
+        close(main_pipe[1]); // close write end of main_pipe
 
-        dup2(child_to_parent_pipe[1], 2 /*standard error*/);
-        dup2(parent_to_child_pipe[0], 0 /*standard input*/);
+        dup2(error_pipe[1], 2 /*standard error*/);
+        dup2(main_pipe[0], 0 /*standard input*/);
 
         // testing
         // fprintf(stderr, "hello this is tesing!\n");
@@ -277,12 +277,12 @@ void parent_proc(arg_data *data, char* buf) {
 
     while(sent < s) {
         printf("sending \n");
-        sent += write(parent_to_child_pipe[1], send_data + sent, s - sent);
+        sent += write(main_pipe[1], send_data + sent, s - sent);
         // repeat until all data is sent
     }
     // char nu = 0x0;
-    // write(parent_to_child_pipe[1], &nu, 1);
-    // close(parent_to_child_pipe[1]); // need to close pipe for the child read to finish
+    // write(main_pipe[1], &nu, 1);
+    // close(main_pipe[1]); // need to close pipe for the child read to finish
 
     // read() will return how many bytes was taken from the kernel (read)
     size_t buf_size = sizeof(buf)/sizeof(buf[0]);
@@ -290,7 +290,7 @@ void parent_proc(arg_data *data, char* buf) {
 
     // TODO: should check if read can happen more than once
     // What if no output is given from child?
-    while(s = read(child_to_parent_pipe[0], buf, buf_size-1)) {
+    while(s = read(error_pipe[0], buf, buf_size-1)) {
         // TODO: concatenate all of the read strings ???
         printf("(read: %ld)\n", s);  // testing
         buf[s] = 0x0;           // put last character as NULL so it can be printed out as string

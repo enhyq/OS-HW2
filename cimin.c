@@ -129,6 +129,48 @@ void reduce(arg_data *data) {
             head_tail[i+(tm-s-i)] = 0x0;
 
             /* COMMON CODE FOR MID AND HEAD_TAIL */
+            if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
+                perror("Error creating pipe");
+                exit(1); // 1 to indicate process failed
+            }
+            
+
+            /* child_pid IS GLOBAL VARIABLE */
+            child_pid = fork();
+            child_running = 1;
+            if(child_pid == 0 /* it's CHILD !!!*/) {
+                child_proc(data);
+            } else /* it's PARENT !!! */ {
+                char buf[4097] = {'\0'};
+
+                DPRINT("head_tail is: %s\n", head_tail);
+
+                /* parent_proc WILL UPDATE buf */
+                parent_proc(data, head_tail, buf); // update buf
+
+                close(main_pipe[1]); // close write end
+                close(error_pipe[0]); // close read end
+
+                /* CHECK INTERRUPT EXIT */
+                if(interrupt_exit) return;
+
+                /* CHECK CRASH BY TIME OVER */
+                /* CHECK IF MESSAGE IS IN ERROR STRING */
+                if(strstr(buf, data->message) != NULL || // strstr returns pointer
+                    timeover == 1
+                ) { 
+                    if(timeover) DPRINT("Crash detected by time over!\n");
+                    else DPRINT("Crash detected!\n");
+                    // update crashing input
+                    strcpy(data->crashing_input, head_tail);
+                    // update crashing input size
+                    data->crashing_input_size = strlen(head_tail);
+                    // recursively call reduce()
+                    reduce(data);
+                    return;
+                }
+            }
+            /* END OF COMMON CODE */
 
 
         }

@@ -202,7 +202,7 @@ arg_data parser(int argc, char* argv[]) {
         switch (argv[opt_index][1]) {
         case 'i':
             data.input = argv[opt_index+1];
-            // TODO: check if input is a valid file
+            // TODO: check if input is a valid file?
             break;
         case 'm':
             data.message = argv[opt_index+1];
@@ -214,7 +214,7 @@ arg_data parser(int argc, char* argv[]) {
             usage_error(argv[0]);
             break;
         }
-        fprintf(stdout, "-%c: %s\n", argv[opt_index][1], argv[opt_index+1]); // testing
+        // DPRINT("-%c: %s\n", argv[opt_index][1], argv[opt_index+1]); // testing
         opt_requirement--;
     }
 
@@ -237,9 +237,9 @@ arg_data parser(int argc, char* argv[]) {
     }
 
     // testing if argv is good
-    for(int i=0; i<data.argc+1; i++) {
-        printf("argv[%d]: %s\n", i, data.argv[i]);
-    }
+    // for(int i=0; i<data.argc+1; i++) {
+    //     DPRINT("argv[%d]: %s\n", i, data.argv[i]);
+    // }
 
     // read input file
     int input_fd = open(data.input, O_RDONLY);

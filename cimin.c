@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <string.h>
+
 
 #define DEBUG
   
@@ -20,6 +20,8 @@
 #endif
 
 
+#define MAX_CI_SIZE 4097
+
 /* global variables */
 // should I put static to the variables?
 int error_pipe[2];
@@ -29,6 +31,8 @@ int timeover = 0;
 int child_running = 0;
 int interrupt_exit = 0;
 pid_t child_pid;
+
+int crash_count = 0;
 
 /* structure to store argument data */
 typedef struct _arg_data {
@@ -41,12 +45,20 @@ typedef struct _arg_data {
     char **argv;
     int argc;
 
-    char crashing_input[4097];
+    char crashing_input[MAX_CI_SIZE];
     int crashing_input_size;
 } arg_data;
 
+void print_as_hex(char * hex_input, int len){
+    /* TEST PRINT IN HEX DATA FORMAT */
+    for(int i=0; i<len; i++) {
+        printf("%x ", (unsigned char)hex_input[i]);
+        if((i+1)%16==0) printf("\n");
+    }
+    printf("\n");
+}
 
-void print(arg_data *d){
+void print_data(arg_data *d){
     printf("input: %s\n", d->input);
     printf("message: %s\n", d->message);
     printf("output: %s\n", d->output);
@@ -58,9 +70,19 @@ void print(arg_data *d){
     }
     printf("argc: %d\n", d->argc);
     printf("crashing_input: %s\n", d->crashing_input);
+    printf("crashing_input as hex:\n");
+    print_as_hex(d->crashing_input, d->crashing_input_size);
     printf("crashing_input_size: %d\n", d->crashing_input_size);
 }
 
+void strncpy_my(char* dst, char* src, int size) {
+    char* c;
+    for(int i=0; i<size; i++){
+        // c = dst + i;
+        dst[i] = src[i]; // libpng gets segmentation fault at mid size = 1010
+        // c = src+i;
+    }
+}
 
 
 /* function declarations */
@@ -71,24 +93,26 @@ arg_data parser(int, char*[]);
 void minimize(arg_data*);
 void reduce(arg_data*);
 void child_proc(arg_data*);
-void parent_proc(arg_data*, char*, char*);
+void parent_proc(arg_data*, char*, int, char*);
 
 
 int main(int argc, char *argv[]) {
 
     arg_data data = parser(argc, argv);
 
-    // printf("---------------\n");
-    // print(&data);
-    // printf("---------------\n");
+    printf("---------------\n");
+    print_data(&data);
+    printf("---------------\n");
 
     // data is modified!
     minimize(&data);
 
     FILE *f = fopen(data.output,"w");
+    data.crashing_input[data.crashing_input_size] = 0x0;
     fprintf(f, "%s", data.crashing_input);
     fclose(f);
 
+    printf("Crash count: %d\n", crash_count); // testing
     printf("Program done\n");
     return 0;
 }
@@ -102,7 +126,7 @@ void minimize(arg_data *data) {
 
     // set timer value
     t.it_value.tv_sec = 3;
-    t.it_value.tv_usec = 100000; // micro second -> (10^-6) second
+    // t.it_value.tv_usec = 100000; // micro second -> (10^-6) second
     t.it_interval = t.it_value; // 3.1 sec
 
     /* you could just use alarm() function */
@@ -114,19 +138,21 @@ void minimize(arg_data *data) {
 void reduce(arg_data *data) {
     // This function will directly update the crashing_input and its size variable
     int tm = data->crashing_input_size;
+    // input size is size of the input
     char* t = data->crashing_input;
     int s = tm - 1;
 
     // Implementation of the algorithm
     while(s > 0) {
-        // head + tail
+        /* HEAD TAIL */
         for( int i=0 ; i<=tm - s ; i++ ) {
             char head_tail[tm]; // begins with 1 character + null at the end
+            int head_tail_size = tm-s; // size of head_tail will be tm-s
+            // strncpy_my(dst, src, cnt);
+            strncpy_my(head_tail, t, i);
+            strncpy_my(head_tail+i, t+s+i, head_tail_size); // -i?
             
-            // strncpy(dst, src, cnt);
-            strncpy(head_tail, t, i);
-            strcpy(head_tail+i, t+s+i);
-            head_tail[i+(tm-s-i)] = 0x0;
+
 
             /* COMMON CODE FOR MID AND HEAD_TAIL */
             if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
@@ -141,15 +167,14 @@ void reduce(arg_data *data) {
             if(child_pid == 0 /* it's CHILD !!!*/) {
                 child_proc(data);
             } else /* it's PARENT !!! */ {
-                char buf[4097] = {'\0'};
+                char buf[MAX_CI_SIZE] = {'\0'};
 
-                DPRINT("head_tail is: %s\n", head_tail);
+                // DPRINT("head_tail is: %s\n", head_tail);
+                printf("HEAD_TAIL(%d): ", head_tail_size);
+                print_as_hex(head_tail, head_tail_size); // test
 
                 /* parent_proc WILL UPDATE buf */
-                parent_proc(data, head_tail, buf); // update buf
-
-                close(main_pipe[1]); // close write end
-                close(error_pipe[0]); // close read end
+                parent_proc(data, head_tail, head_tail_size, buf); // update buf
 
                 /* CHECK INTERRUPT EXIT */
                 if(interrupt_exit) return;
@@ -159,12 +184,13 @@ void reduce(arg_data *data) {
                 if(strstr(buf, data->message) != NULL || // strstr returns pointer
                     timeover == 1
                 ) { 
+                    crash_count++; // testing
                     if(timeover) DPRINT("Crash detected by time over!\n");
                     else DPRINT("Crash detected!\n");
                     // update crashing input
-                    strcpy(data->crashing_input, head_tail);
+                    strncpy_my(data->crashing_input, head_tail, head_tail_size);
                     // update crashing input size
-                    data->crashing_input_size = strlen(head_tail);
+                    data->crashing_input_size = head_tail_size;
                     // recursively call reduce()
                     reduce(data);
                     return;
@@ -174,11 +200,15 @@ void reduce(arg_data *data) {
 
 
         }
-        // mid
+
+        /* MID */
         for( int i=0 ; i<=tm - s - 1 ; i++ ) {
             char mid[tm]; // doesn't really have to fit the size (okay to have more)
-            strncpy(mid, t+i, s);
-            mid[i+s] = 0x0;
+            int mid_size = s; // size of head_tail will be tm-s
+            
+            strncpy_my(mid, t+i, mid_size);
+
+            // mid[i+s] = 0x0; // delete because it can be other 
 
             /* COMMON CODE FOR MID AND HEAD_TAIL */
             if (pipe(error_pipe) != 0 || pipe(main_pipe) != 0) {
@@ -193,15 +223,14 @@ void reduce(arg_data *data) {
             if(child_pid == 0 /* it's CHILD !!!*/) {
                 child_proc(data);
             } else /* it's PARENT !!! */ {
-                char buf[4097] = {'\0'};
+                char buf[MAX_CI_SIZE] = {'\0'};
 
-                DPRINT("mid is: %s\n", mid);
+                // DPRINT("head_tail is: %s\n", head_tail);
+                printf("MID(%d): ", mid_size);
+                print_as_hex(mid, mid_size); // test
 
                 /* parent_proc WILL UPDATE buf */
-                parent_proc(data, mid, buf); // update buf
-
-                close(main_pipe[1]); // close write end
-                close(error_pipe[0]); // close read end
+                parent_proc(data, mid, mid_size, buf); // update buf
 
                 /* CHECK INTERRUPT EXIT */
                 if(interrupt_exit) return;
@@ -214,9 +243,9 @@ void reduce(arg_data *data) {
                     if(timeover) DPRINT("Crash detected by time over!\n");
                     else DPRINT("Crash detected!\n");
                     // update crashing input
-                    strcpy(data->crashing_input, mid);
+                    strncpy_my(data->crashing_input, mid, mid_size);
                     // update crashing input size
-                    data->crashing_input_size = strlen(mid);
+                    data->crashing_input_size = mid_size;
                     // recursively call reduce()
                     reduce(data);
                     return;
@@ -284,11 +313,17 @@ arg_data parser(int argc, char* argv[]) {
     // }
 
     // read input file
-    int input_fd = open(data.input, O_RDONLY);
-    int c_i_arr_size = sizeof(data.crashing_input)/sizeof(data.crashing_input[0]);
-    data.crashing_input_size = read(input_fd, data.crashing_input, c_i_arr_size);
-    data.crashing_input_size--; // since EOF is also read, remove this count
-    data.crashing_input[c_i_arr_size-1] = '\0'; // mark the last char as NULL just in case
+    int input_fd = open(data.input, O_RDONLY);  
+    int c_i_arr_size = sizeof(data.crashing_input)/sizeof(data.crashing_input[0]); // 4097
+    // printf("c_i_arr_size: %d\n", c_i_arr_size);
+
+    data.crashing_input_size = read(input_fd, data.crashing_input, c_i_arr_size-1);
+
+    /* TEST PRINT IN HEX DATA FORMAT */
+    print_as_hex(data.crashing_input, data.crashing_input_size);
+
+    // data.crashing_input_size--; // since EOF is also read, remove this count
+    // data.crashing_input[c_i_arr_size-1] = '\0'; // mark the last char as NULL just in case
 
     // testing
     // printf("crashing input size: %d\n", data.crashing_input_size);
@@ -316,7 +351,7 @@ void child_proc(arg_data *data) {
  * parent will update "buf" variable directly
  * buf contains the stderr output of the target program
  */
-void parent_proc(arg_data *data, char* ci, char* buf) {
+void parent_proc(arg_data *data, char* ci, int ci_size, char* buf) {
     // pipes are global vairable
     // close unused end points
     close(error_pipe[1]);
@@ -325,9 +360,10 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
     /* START TIMER */
     timeover = 0;
     setitimer(ITIMER_REAL, &t, 0x0);
+    // alarm(3); // not sure if this is going to work
 
     char *send_data = ci;
-    ssize_t s = strlen(ci);
+    ssize_t s = ci_size; // same
     ssize_t sent = 0;
 
 
@@ -343,6 +379,7 @@ void parent_proc(arg_data *data, char* ci, char* buf) {
         // printf(" > %s\n", buf);     // testing
     }
     buf[count] = 0x0;
+    close(error_pipe[0]); // close read end
 
     int return_status = wait(0x0); // wait until child is finished
     child_running = 0; // child is not running any more
@@ -382,4 +419,3 @@ void handler(int sig) {
         DPRINT("what SIG is this ???: %d\n", sig);
     }
 }
-

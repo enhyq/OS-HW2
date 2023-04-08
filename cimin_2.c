@@ -19,8 +19,9 @@
 #define DPRINT // macros
 #endif
 
+/* SIZE OF CRASHING INPUT (CI) AND BUF */
 #define MAX_CI_SIZE 4097
-#define MAX_BUF_SIZE 4097
+#define MAX_BUF_SIZE 4097   // used to define size of array that stores stderr from target program
 
 /* GLOBAL VARIABLES */
 int error_pipe[2];          // should I make the variables static?
@@ -37,7 +38,11 @@ int interrupt_exit = 0;
 int crash_count = 0;
 
 
-// some idea to improve the algorithm
+/* THINGS TO DO */
+// 1. return proper error message if given argument is invalid
+
+
+/* SOME IDEAS TO IMPROVE THE ALGORITHM */
 // use binary search?
 // for program like libpng,
 // crash happens for almost all input until it gets significantly small
@@ -106,6 +111,7 @@ int main(int argc, char *argv[])
     // data is modified!
     minimize(&data);
 
+    /* need to fix this! */
     FILE *f = fopen(data.output, "w");
     data.crashing_input[data.crashing_input_size] = 0x0;
     fprintf(f, "%s", data.crashing_input);

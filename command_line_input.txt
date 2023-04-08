@@ -1,0 +1,19 @@
+./c -i jsmn/testcases/crash.json -m "AddressSanitizer: heap-buffer-overflow" -o jsmn.minimized jsmn/jsondump
+
+
+
+./c -i libxml2/testcases/crash.xml -m "SEGV on unknown address" -o libxml2.minimized libxml2/xmllint --recover --postvalid - 
+
+
+
+./c -i balance/testcases/fail -m "hi" -o balance.minimized balance/balance
+
+
+
+./c -i libpng/crash.png -m "MemorySanitizer: use-of-uninitialized-value" -o libpng.minimized libpng/libpng/test_pngfix
+
+
+
+Test case: 
+
+./c -i t.crash -m "wow" -o t.minimized t

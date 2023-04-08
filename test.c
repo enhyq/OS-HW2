@@ -5,7 +5,8 @@ char s[1000];
 int main(void) {
     if (gets(s) != NULL) {
         if(strchr(s, 'x') && strchr(s, 'z')) {
-            fprintf(stderr, "CRASH!\n");
+            // fprintf(stderr, "CRASH!\n");
+            while(1);
             exit(2);
         }
         else {
